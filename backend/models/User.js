@@ -25,10 +25,11 @@ const userSchema = new mongoose.Schema(
             select: false
         },
 
+        // Every registered user is an Agent
         role: {
             type: String,
-            enum: ['user', 'admin'],
-            default: 'user'
+            default: 'agent',
+            immutable: true
         },
 
         isActive: {

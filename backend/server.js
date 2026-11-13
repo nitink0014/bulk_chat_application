@@ -8,6 +8,9 @@ import cookieParser from 'cookie-parser';
 import connectDB from './config/db.js';
 import authRoutes from './routes/authRoutes.js';
 import monitoringRoutes from './routes/monitoringRoutes.js';
+import agentRoutes from './routes/agentRoutes.js';
+import widgetRoutes from './routes/widgetRoutes.js';
+import visitorRoutes from './routes/visitorRoutes.js';
 
 dotenv.config();
 
@@ -36,9 +39,20 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// API routes - register AFTER middleware
+// Widget test
+app.post('/api/widgets/test', (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: 'Widget route is working'
+    });
+});
+
+// API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/monitoring', monitoringRoutes);
+app.use('/api/agent', agentRoutes);
+app.use('/api/widgets', widgetRoutes);
+app.use('/api/visitors', visitorRoutes);
 
 // Start server
 const PORT = process.env.PORT || 5000;
