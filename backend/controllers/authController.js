@@ -1,9 +1,6 @@
 
 import User from '../models/User.js';
-import DeviceSession from '../models/DeviceSession.js';
-
 import generateToken from '../utils/generateToken.js';
-import getDeviceInfo from '../utils/deviceInfo.js';
 
 // Cookie configuration
 const cookieOptions = () => ({
@@ -14,9 +11,7 @@ const cookieOptions = () => ({
     path: '/',
 });
 
-// @desc    Register a new user
-// @route   POST /api/auth/register
-// @access  Public
+// Register user
 export const registerUser = async (req, res) => {
     try {
         const { name, email, password } = req.body;
@@ -44,13 +39,9 @@ export const registerUser = async (req, res) => {
             });
         }
 
-        const user = await User.create({
-            name,
-            email,
-            password,
-        });
+        const user = await User.create({ name, email, password });
 
-        res.status(201).json({
+        return res.status(201).json({
             success: true,
             message: 'User registered successfully',
             user: {
@@ -60,18 +51,15 @@ export const registerUser = async (req, res) => {
                 role: user.role,
             },
         });
-
     } catch (error) {
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
             message: error.message,
         });
     }
 };
 
-// @desc    Login user and create monitoring session
-// @route   POST /api/auth/login
-// @access  Public
+// Login user
 export const loginUser = async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -99,29 +87,14 @@ export const loginUser = async (req, res) => {
             });
         }
 
-        // Generate JWT
         const token = generateToken(user._id);
 
-        // Update last login
         user.lastLogin = new Date();
         await user.save();
 
-        // Collect device information
-        const deviceInfo = getDeviceInfo(req);
-
-        // Create monitoring session
-        const deviceSession = await DeviceSession.create({
-            user: user._id,
-            ...deviceInfo,
-            isOnline: true,
-            loginAt: new Date(),
-            lastActiveAt: new Date(),
-        });
-
-        // Set authentication cookie
         res.cookie('bulkchat_token', token, cookieOptions());
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             message: 'Login successful',
             user: {
@@ -130,23 +103,19 @@ export const loginUser = async (req, res) => {
                 email: user.email,
                 role: user.role,
             },
-            sessionId: deviceSession._id,
         });
-
     } catch (error) {
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
             message: error.message,
         });
     }
 };
 
-// @desc    Get logged-in user profile
-// @route   GET /api/auth/profile
-// @access  Private
+// Get logged-in user profile
 export const getProfile = async (req, res) => {
     try {
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             user: {
                 id: req.user._id,
@@ -155,53 +124,31 @@ export const getProfile = async (req, res) => {
                 role: req.user.role,
             },
         });
-
     } catch (error) {
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
             message: error.message,
         });
     }
 };
 
-// @desc    Logout user
-// @route   POST /api/auth/logout
-// @access  Private
-
+// Logout user
 export const logoutUser = async (req, res) => {
     try {
-        // Find the latest active session for this user
-        const activeSession = await DeviceSession.findOne({
-            user: req.user._id,
-            isOnline: true,
-        }).sort({ loginAt: -1 });
-
-        // Mark session as offline
-        if (activeSession) {
-            activeSession.isOnline = false;
-            activeSession.logoutAt = new Date();
-            activeSession.lastActiveAt = new Date();
-
-            await activeSession.save();
-        }
-
-        // Clear authentication cookie
         res.clearCookie('bulkchat_token', {
             ...cookieOptions(),
             expires: new Date(0),
             maxAge: 0,
         });
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             message: 'Logout successful',
         });
-
     } catch (error) {
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
             message: error.message,
         });
     }
 };
-

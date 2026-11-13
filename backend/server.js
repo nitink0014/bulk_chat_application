@@ -7,7 +7,6 @@ import cookieParser from 'cookie-parser';
 
 import connectDB from './config/db.js';
 import authRoutes from './routes/authRoutes.js';
-import monitoringRoutes from './routes/monitoringRoutes.js';
 import agentRoutes from './routes/agentRoutes.js';
 import widgetRoutes from './routes/widgetRoutes.js';
 import visitorRoutes from './routes/visitorRoutes.js';
@@ -49,7 +48,6 @@ app.post('/api/widgets/test', (req, res) => {
 
 // API routes
 app.use('/api/auth', authRoutes);
-app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/agent', agentRoutes);
 app.use('/api/widgets', widgetRoutes);
 app.use('/api/visitors', visitorRoutes);
