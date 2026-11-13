@@ -3,27 +3,30 @@ import { UAParser } from 'ua-parser-js';
 
 const getDeviceInfo = (req) => {
     const parser = new UAParser(req.headers['user-agent'] || '');
-    const result = parser.getResult();
+    
+    const browser = parser.getBrowser();
+    const os = parser.getOS();
+    const device = parser.getDevice();
 
     return {
-        ipAddress:
-            req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-            req.socket.remoteAddress ||
-            null,
-
+        ipAddress: req.ip || null,
         userAgent: req.headers['user-agent'] || null,
 
         browser: {
-            name: result.browser.name || 'Unknown',
-            version: result.browser.version || 'Unknown',
+            name: browser.name || 'Unknown',
+            version: browser.version || 'Unknown',
         },
 
         operatingSystem: {
-            name: result.os.name || 'Unknown',
-            version: result.os.version || 'Unknown',
+            name: os.name || 'Unknown',
+            version: os.version || 'Unknown',
         },
 
-        device: result.device.type || 'desktop',
+        device: device.type === 'mobile'
+            ? 'mobile'
+            : device.type === 'tablet'
+                ? 'tablet'
+                : 'desktop',
     };
 };
 
