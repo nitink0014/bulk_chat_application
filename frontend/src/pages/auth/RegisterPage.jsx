@@ -1,21 +1,58 @@
 
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   MessageCircle,
   ArrowRight,
   ShieldCheck,
-  UserPlus,
 } from "lucide-react";
+import api from "../../services/api";
 
 function RegisterPage() {
   const navigate = useNavigate();
 
-  const handleSubmit = (e) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // Frontend demo only.
-    // Actual agent registration will be connected with backend later.
-    navigate("/agent/login");
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    const formData = new FormData(e.currentTarget);
+
+    const name = formData.get("name").trim();
+    const email = formData.get("email").trim().toLowerCase();
+    const password = formData.get("password");
+
+    try {
+      const response = await api.post("/auth/register", {
+        name,
+        email,
+        password,
+      });
+
+      setSuccess(
+        response.data.message || "Agent account created successfully."
+      );
+
+      e.currentTarget.reset();
+
+      setTimeout(() => {
+        navigate("/agent/login", { replace: true });
+      }, 1200);
+
+    } catch (error) {
+      setError(
+        error.response?.data?.message ||
+        "Registration failed. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -117,12 +154,25 @@ function RegisterPage() {
               </p>
             </div>
 
+            {error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                {error}
+              </div>
+            )}
+
+            {success && (
+              <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+                {success}
+              </div>
+            )}
+
             <button
               type="submit"
-              className="w-full h-12 bg-[#6650d9] hover:bg-[#5140b5] text-white rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transition duration-200 hover:-translate-y-0.5"
+              disabled={loading}
+              className="w-full h-12 bg-[#6650d9] hover:bg-[#5140b5] disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transition duration-200 hover:-translate-y-0.5"
             >
-              Create agent account
-              <ArrowRight size={17} />
+              {loading ? "Creating account..." : "Create agent account"}
+              {!loading && <ArrowRight size={17} />}
             </button>
           </form>
 

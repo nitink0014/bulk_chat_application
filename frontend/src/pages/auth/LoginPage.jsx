@@ -1,16 +1,56 @@
 
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MessageCircle, ArrowRight, ShieldCheck } from "lucide-react";
+import api from "../../services/api";
 
 function LoginPage() {
   const navigate = useNavigate();
 
-  const handleSubmit = (e) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // Frontend demo navigation only.
-    // Real authentication will be connected with the backend later.
-    navigate("/agent/dashboard");
+    setLoading(true);
+    setError("");
+
+    const formData = new FormData(e.currentTarget);
+
+    const email = formData.get("email").trim().toLowerCase();
+    const password = formData.get("password");
+
+    try {
+      const response = await api.post("/auth/login", {
+        email,
+        password,
+      });
+
+      const user = response.data.user;
+
+      // Only support agents can access agent dashboard.
+      if (user.role !== "admin") {
+        try {
+          await api.post("/auth/logout");
+        } catch (logoutError) {
+          console.error("Logout error:", logoutError);
+        }
+
+        setError("This account does not have support agent access.");
+        return;
+      }
+
+      navigate("/agent/dashboard", { replace: true });
+
+    } catch (error) {
+      setError(
+        error.response?.data?.message ||
+        "Login failed. Please check your credentials and try again."
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -88,12 +128,19 @@ function LoginPage() {
               />
             </div>
 
+            {error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                {error}
+              </div>
+            )}
+
             <button
               type="submit"
-              className="w-full h-12 bg-[#6650d9] hover:bg-[#5140b5] text-white rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transition duration-200 hover:-translate-y-0.5"
+              disabled={loading}
+              className="w-full h-12 bg-[#6650d9] hover:bg-[#5140b5] disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transition duration-200 hover:-translate-y-0.5"
             >
-              Sign in to workspace
-              <ArrowRight size={17} />
+              {loading ? "Signing in..." : "Sign in to workspace"}
+              {!loading && <ArrowRight size={17} />}
             </button>
           </form>
 
