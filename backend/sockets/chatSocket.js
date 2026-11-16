@@ -7,35 +7,78 @@ import Widget from '../models/Widget.js';
 import Visitor from '../models/Visitor.js';
 import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
+import PushSubscription from '../models/PushSubscription.js';
+
+import {
+    sendPushNotification,
+} from '../services/pushNotificationService.js';
+
+
+// SEND PUSH NOTIFICATION TO ASSIGNED AGENT
+const notifyAssignedAgent = async (conversation, message) => {
+    try {
+        if (!conversation.agent) {
+            return;
+        }
+
+        // Find all devices registered by the assigned agent
+        const subscriptions = await PushSubscription.find({
+            agent: conversation.agent,
+        }).lean();
+
+        if (!subscriptions.length) {
+            console.log('No push subscriptions found for assigned agent.');
+            return;
+        }
+
+        const payload = {
+            title: 'BulkChat - New Message',
+
+            body: message.content.length > 120
+                ? `${message.content.substring(0, 120)}...`
+                : message.content,
+
+            url: '/agent/dashboard',
+
+            tag: `bulkchat-${conversation._id}`,
+
+            data: {
+                conversationId: conversation._id.toString(),
+            },
+        };
+
+        // Send notification to all registered devices
+        const results = await Promise.allSettled(
+            subscriptions.map((subscription) =>
+                sendPushNotification(subscription, payload)
+            )
+        );
+
+        console.log(
+            `Push notification attempts: ${results.length}`
+        );
+
+    } catch (error) {
+        console.error('Agent Push Notification Failed:', error);
+    }
+};
+
 
 const initializeChatSockets = (io) => {
 
-    // Authentication for Agents and Visitors
+    // AUTHENTICATION
     io.use(async (socket, next) => {
         try {
             const auth = socket.handshake.auth || {};
 
             // VISITOR AUTHENTICATION
             if (auth.role === 'visitor') {
-                const { publicKey, visitorId } = auth;
+                const { publicKey, visitorId, currentPage } = auth;
 
                 if (!publicKey || !visitorId) {
-                    return next(new Error('Public key and visitor ID are required'));
-                }
-
-                // Verify website origin
-                const origin = socket.handshake.headers.origin;
-
-                if (!origin) {
-                    return next(new Error('Website origin is required'));
-                }
-
-                let hostname;
-
-                try {
-                    hostname = new URL(origin).hostname.toLowerCase();
-                } catch {
-                    return next(new Error('Invalid website origin'));
+                    return next(
+                        new Error('Public key and visitor ID are required')
+                    );
                 }
 
                 // Find active widget
@@ -48,7 +91,26 @@ const initializeChatSockets = (io) => {
                     return next(new Error('Widget not found or inactive'));
                 }
 
-                // Verify allowed domain
+                // Validate customer website domain
+                if (!currentPage) {
+                    return next(new Error('Customer website URL is required'));
+                }
+
+                let hostname;
+
+                try {
+                    const pageUrl = new URL(currentPage);
+
+                    if (!['http:', 'https:'].includes(pageUrl.protocol)) {
+                        return next(new Error('Invalid website URL'));
+                    }
+
+                    hostname = pageUrl.hostname.toLowerCase();
+
+                } catch {
+                    return next(new Error('Invalid website URL'));
+                }
+
                 const allowedDomains = widget.allowedDomains.map(
                     domain => domain.toLowerCase()
                 );
@@ -64,7 +126,9 @@ const initializeChatSockets = (io) => {
                 });
 
                 if (!visitor) {
-                    return next(new Error('Visitor not found. Track visitor first.'));
+                    return next(
+                        new Error('Visitor not found. Track visitor first.')
+                    );
                 }
 
                 socket.role = 'visitor';
@@ -79,12 +143,17 @@ const initializeChatSockets = (io) => {
                 return next(new Error('Invalid socket role'));
             }
 
-            const cookieHeader = socket.handshake.headers.cookie || '';
+            const cookieHeader =
+                socket.handshake.headers.cookie || '';
 
             const cookies = Object.fromEntries(
                 cookieHeader.split(';').filter(Boolean).map(cookie => {
                     const [key, ...value] = cookie.trim().split('=');
-                    return [key, decodeURIComponent(value.join('='))];
+
+                    return [
+                        key,
+                        decodeURIComponent(value.join('=')),
+                    ];
                 })
             );
 
@@ -94,9 +163,13 @@ const initializeChatSockets = (io) => {
                 return next(new Error('Authentication required'));
             }
 
-            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            const decoded = jwt.verify(
+                token,
+                process.env.JWT_SECRET
+            );
 
-            const user = await User.findById(decoded.id).select('-password');
+            const user = await User.findById(decoded.id)
+                .select('-password');
 
             if (!user || !user.isActive) {
                 return next(new Error('Invalid or inactive agent'));
@@ -105,24 +178,30 @@ const initializeChatSockets = (io) => {
             socket.role = 'agent';
             socket.user = user;
 
-            next();
+            return next();
 
         } catch (error) {
             console.error('Socket Authentication Error:', error);
-            next(new Error('Socket authentication failed'));
+
+            return next(new Error('Socket authentication failed'));
         }
     });
 
-    // Socket connection
+
+    // SOCKET CONNECTION
     io.on('connection', (socket) => {
 
         if (socket.role === 'agent') {
             console.log(`Agent connected: ${socket.user._id}`);
 
             socket.join(`agent:${socket.user._id}`);
+
         } else {
-            console.log(`Visitor connected: ${socket.visitor.visitorId}`);
+            console.log(
+                `Visitor connected: ${socket.visitor.visitorId}`
+            );
         }
+
 
         // JOIN CONVERSATION
         socket.on('join_conversation', async (data, callback) => {
@@ -169,7 +248,7 @@ const initializeChatSockets = (io) => {
 
                 socket.join(`conversation:${conversationId}`);
 
-                callback?.({
+                return callback?.({
                     success: true,
                     message: 'Joined conversation successfully',
                 });
@@ -177,14 +256,15 @@ const initializeChatSockets = (io) => {
             } catch (error) {
                 console.error('Join Conversation Error:', error);
 
-                callback?.({
+                return callback?.({
                     success: false,
                     message: 'Failed to join conversation',
                 });
             }
         });
 
-        // SEND MESSAGE (AGENT AND VISITOR)
+
+        // SEND MESSAGE
         socket.on('send_message', async (data, callback) => {
             try {
                 const { conversationId, content } = data || {};
@@ -232,7 +312,7 @@ const initializeChatSockets = (io) => {
                     });
                 }
 
-                // Sender details come from authenticated socket
+                // Create message
                 const message = await Message.create({
                     conversation: conversation._id,
                     senderType: socket.role,
@@ -242,18 +322,24 @@ const initializeChatSockets = (io) => {
                     content: content.trim(),
                 });
 
+                // Update conversation
                 conversation.lastMessage = message.content;
                 conversation.lastMessageAt = message.createdAt;
 
                 await conversation.save();
 
-                // Send message to everyone in conversation
+                // Broadcast message
                 io.to(`conversation:${conversationId}`).emit(
                     'new_message',
                     message
                 );
 
-                callback?.({
+                // Push notification only for visitor messages
+                if (socket.role === 'visitor' && conversation.agent) {
+                    notifyAssignedAgent(conversation, message);
+                }
+
+                return callback?.({
                     success: true,
                     message: 'Message sent successfully',
                     data: message,
@@ -262,21 +348,27 @@ const initializeChatSockets = (io) => {
             } catch (error) {
                 console.error('Send Message Error:', error);
 
-                callback?.({
+                return callback?.({
                     success: false,
                     message: 'Failed to send message',
                 });
             }
         });
 
+
         // DISCONNECT
         socket.on('disconnect', () => {
             if (socket.role === 'agent') {
-                console.log(`Agent disconnected: ${socket.user._id}`);
+                console.log(
+                    `Agent disconnected: ${socket.user._id}`
+                );
             } else {
-                console.log(`Visitor disconnected: ${socket.visitor.visitorId}`);
+                console.log(
+                    `Visitor disconnected: ${socket.visitor.visitorId}`
+                );
             }
         });
+
     });
 };
 

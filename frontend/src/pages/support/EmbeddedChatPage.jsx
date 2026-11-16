@@ -1,156 +1,360 @@
 
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
-  Send,
-  MessageCircle,
+  ArrowLeft,
   Headset,
+  Mail,
+  MessageCircle,
+  Send,
   ShieldCheck,
   UserRound,
-  Mail,
-  Phone,
-  ArrowLeft,
 } from "lucide-react";
 
-function EmbeddedChatPage() {
+import api from "../../services/api";
+import { connectVisitorSocket } from "../../services/socket";
+import {
+  getVisitorId,
+  trackVisitor,
+} from "../../utils/visitor";
+
+const EmbeddedChatPage = () => {
+  const [searchParams] = useSearchParams();
+
+  const publicKey = searchParams.get("key");
+
+  const [currentPage, setCurrentPage] = useState("");
+
   const [customer, setCustomer] = useState({
     name: "",
     email: "",
-    phone: "",
   });
 
   const [chatStarted, setChatStarted] = useState(false);
+  const [startingChat, setStartingChat] = useState(false);
+  const [connected, setConnected] = useState(false);
+
   const [message, setMessage] = useState("");
-
   const [messages, setMessages] = useState([]);
+  const [error, setError] = useState("");
 
+  const [conversation, setConversation] = useState(null);
+
+  const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
 
+  // Receive customer website URL from parent website
+  useEffect(() => {
+    const handleParentMessage = (event) => {
+      if (event.source !== window.parent) return;
+
+      if (event.origin !== "http://localhost:5174") return;
+
+      if (event.data?.type !== "BULKCHAT_PARENT_INFO") return;
+
+      const websiteUrl = event.data.customerWebsite;
+
+      try {
+        const url = new URL(websiteUrl);
+
+        if (!["http:", "https:"].includes(url.protocol)) {
+          return;
+        }
+
+        if (url.origin !== event.origin) {
+          return;
+        }
+
+        setCurrentPage(url.href);
+      } catch {
+        console.error("Invalid customer website URL");
+      }
+    };
+
+    window.addEventListener("message", handleParentMessage);
+
+    // Inform parent website that iframe is ready
+    window.parent.postMessage(
+      { type: "BULKCHAT_READY" },
+      "*"
+    );
+
+    return () => {
+      window.removeEventListener("message", handleParentMessage);
+    };
+  }, []);
+
+  // Scroll to latest message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({
       behavior: "smooth",
     });
   }, [messages]);
 
-  const handleCustomerChange = (e) => {
-    const { name, value } = e.target;
-
-    setCustomer((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
-  };
-
-  const handleStartChat = (e) => {
-    e.preventDefault();
-
-    const welcomeMessages = [
-      {
-        id: 1,
-        text: `Hello ${customer.name}! 👋 Welcome to BulkChat Support.`,
-        sender: "agent",
-        time: new Date(),
-      },
-      {
-        id: 2,
-        text: "How can we help you today?",
-        sender: "agent",
-        time: new Date(),
-      },
-    ];
-
-    setMessages(welcomeMessages);
-    setChatStarted(true);
-  };
-
-  const handleSendMessage = (e) => {
-    e.preventDefault();
-
-    const trimmedMessage = message.trim();
-
-    if (!trimmedMessage || !chatStarted) return;
-
-    const newMessage = {
-      id: Date.now(),
-      text: trimmedMessage,
-      sender: "customer",
-      time: new Date(),
+  // Disconnect socket when component unmounts
+  useEffect(() => {
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
     };
+  }, []);
 
-    setMessages((prev) => [...prev, newMessage]);
-    setMessage("");
+  // Update customer form
+  const handleCustomerChange = (e) => {
+    setCustomer({
+      ...customer,
+      [e.target.name]: e.target.value,
+    });
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage(e);
+  // Add received message
+  const addMessage = (data) => {
+    setMessages((previous) => {
+      const messageId = data?._id || data?.id;
+
+      if (
+        messageId &&
+        previous.some(
+          (item) => (item._id || item.id) === messageId
+        )
+      ) {
+        return previous;
+      }
+
+      return [...previous, data];
+    });
+  };
+
+  // Connect visitor socket
+  const setupSocket = (key, visitorId, activeConversation) => {
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+    }
+
+    const socket = connectVisitorSocket(
+      key,
+      visitorId,
+      currentPage
+    );
+
+    socketRef.current = socket;
+
+    socket.on("connect", () => {
+      setConnected(true);
+
+      socket.emit(
+        "join_conversation",
+        {
+          conversationId: activeConversation._id,
+        },
+        (response) => {
+          if (!response?.success) {
+            console.error(
+              "Conversation join failed:",
+              response?.message
+            );
+          }
+        }
+      );
+    });
+
+    socket.on("disconnect", () => {
+      setConnected(false);
+    });
+
+    socket.on("connect_error", (err) => {
+      console.error("Socket connection error:", err.message);
+      setConnected(false);
+    });
+
+    socket.on("new_message", (data) => {
+      addMessage(data);
+    });
+  };
+
+  // Start visitor conversation
+  const handleStartChat = async (e) => {
+    e.preventDefault();
+
+    setError("");
+
+    if (!currentPage) {
+      setError(
+        "Waiting for customer website information. Please try again."
+      );
+      return;
+    }
+
+    if (!customer.name.trim() || !customer.email.trim()) {
+      setError("Please enter your name and email.");
+      return;
+    }
+
+    if (!publicKey) {
+      setError("Widget public key is missing.");
+      return;
+    }
+
+    try {
+      setStartingChat(true);
+
+      const visitorId = getVisitorId(publicKey);
+
+      // Track visitor using actual customer website URL
+      await trackVisitor(
+        publicKey,
+        visitorId,
+        currentPage
+      );
+
+      // Create or get conversation
+      const response = await api.post("/chat/conversation", {
+        publicKey,
+        visitorId,
+        name: customer.name.trim(),
+        email: customer.email.trim(),
+      });
+
+      if (!response.data?.success) {
+        throw new Error(
+          response.data?.message || "Unable to start chat."
+        );
+      }
+
+      const activeConversation = response.data.conversation;
+
+      setConversation(activeConversation);
+
+      // Connect visitor socket
+      setupSocket(
+        publicKey,
+        visitorId,
+        activeConversation
+      );
+
+      setChatStarted(true);
+    } catch (err) {
+      console.error("Start chat error:", err);
+
+      setError(
+        err.response?.data?.message ||
+          err.message ||
+          "Something went wrong. Please try again."
+      );
+    } finally {
+      setStartingChat(false);
     }
   };
 
-  const formatTime = (time) => {
-    return new Date(time).toLocaleTimeString([], {
+  // Send visitor message
+  const handleSendMessage = (e) => {
+    e.preventDefault();
+
+    const content = message.trim();
+
+    if (!content || !socketRef.current || !connected) {
+      return;
+    }
+
+    if (!conversation?._id) {
+      return;
+    }
+
+    socketRef.current.emit(
+      "send_message",
+      {
+        conversationId: conversation._id,
+        content,
+      },
+      (response) => {
+        if (!response?.success) {
+          setError(
+            response?.message || "Message could not be sent."
+          );
+          return;
+        }
+
+        setMessage("");
+        setError("");
+      }
+    );
+  };
+
+  const formatTime = (date) => {
+    if (!date) return "";
+
+    return new Date(date).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
   };
 
   return (
-    <div className="flex h-screen w-full flex-col overflow-hidden bg-[#f8f9fc]">
+    <div className="flex h-screen flex-col overflow-hidden bg-white font-sans">
 
       {/* Header */}
-      <div className="flex items-center justify-between bg-[#6650d9] px-4 py-4 text-white shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20">
-            <Headset size={22} />
-          </div>
-
-          <div>
-            <h2 className="text-sm font-bold">
-              BulkChat Support
-            </h2>
-
-            <div className="mt-1 flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-green-400" />
-              <p className="text-xs text-purple-100">
-                We're here to help
-              </p>
-            </div>
-          </div>
+      <div className="flex items-center gap-3 bg-blue-600 px-5 py-4 text-white shadow-md">
+        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20">
+          <Headset size={23} />
         </div>
 
-        <div className="flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5">
-          <ShieldCheck size={14} />
-          <span className="text-xs font-medium">
-            Support
-          </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="font-semibold">
+            Customer Support
+          </h2>
+
+          <p className="flex items-center gap-1 text-xs text-blue-100">
+            <span
+              className={`h-2 w-2 rounded-full ${
+                connected ? "bg-green-400" : "bg-yellow-300"
+              }`}
+            />
+
+            {chatStarted
+              ? connected
+                ? "Online"
+                : "Connecting..."
+              : "We're here to help"}
+          </p>
         </div>
+
+        <ShieldCheck size={21} className="text-blue-100" />
       </div>
 
+      {/* Customer Form */}
       {!chatStarted ? (
-        /* Customer Details Form */
-        <div className="flex flex-1 flex-col overflow-y-auto px-5 py-6">
+        <div className="flex flex-1 flex-col overflow-y-auto p-6">
+
           <div className="mb-6 text-center">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#eeeaff] text-[#6650d9]">
-              <MessageCircle size={28} />
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+              <MessageCircle size={30} />
             </div>
 
-            <h2 className="mt-4 text-lg font-bold text-gray-900">
-              Start a Conversation
+            <h2 className="text-xl font-bold text-gray-800">
+              Welcome!
             </h2>
 
-            <p className="mt-2 text-xs leading-5 text-gray-500">
-              Please share your details so our support team can assist you.
+            <p className="mt-2 text-sm text-gray-500">
+              Please enter your details to start a conversation.
             </p>
           </div>
 
-          <form onSubmit={handleStartChat} className="space-y-4">
+          <form
+            onSubmit={handleStartChat}
+            className="space-y-4"
+          >
             <div>
-              <label className="mb-2 block text-xs font-semibold text-gray-700">
+              <label className="mb-2 block text-sm font-medium text-gray-700">
                 Your Name
               </label>
 
-              <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 focus-within:border-[#6650d9]">
-                <UserRound size={17} className="text-gray-400" />
+              <div className="flex items-center rounded-lg border border-gray-200 px-3 focus-within:border-blue-500">
+                <UserRound
+                  size={18}
+                  className="text-gray-400"
+                />
 
                 <input
                   type="text"
@@ -159,19 +363,21 @@ function EmbeddedChatPage() {
                   onChange={handleCustomerChange}
                   placeholder="Enter your name"
                   required
-                  maxLength={60}
-                  className="w-full py-3 text-sm outline-none"
+                  className="w-full border-0 bg-transparent px-3 py-3 text-sm outline-none"
                 />
               </div>
             </div>
 
             <div>
-              <label className="mb-2 block text-xs font-semibold text-gray-700">
+              <label className="mb-2 block text-sm font-medium text-gray-700">
                 Email Address
               </label>
 
-              <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 focus-within:border-[#6650d9]">
-                <Mail size={17} className="text-gray-400" />
+              <div className="flex items-center rounded-lg border border-gray-200 px-3 focus-within:border-blue-500">
+                <Mail
+                  size={18}
+                  className="text-gray-400"
+                />
 
                 <input
                   type="email"
@@ -180,117 +386,79 @@ function EmbeddedChatPage() {
                   onChange={handleCustomerChange}
                   placeholder="Enter your email"
                   required
-                  className="w-full py-3 text-sm outline-none"
+                  className="w-full border-0 bg-transparent px-3 py-3 text-sm outline-none"
                 />
               </div>
             </div>
 
-            <div>
-              <label className="mb-2 block text-xs font-semibold text-gray-700">
-                Phone Number
-              </label>
-
-              <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 focus-within:border-[#6650d9]">
-                <Phone size={17} className="text-gray-400" />
-
-                <input
-                  type="tel"
-                  name="phone"
-                  value={customer.phone}
-                  onChange={handleCustomerChange}
-                  placeholder="Enter your phone number"
-                  required
-                  maxLength={15}
-                  pattern="[0-9+\-\s()]{7,15}"
-                  title="Please enter a valid phone number"
-                  className="w-full py-3 text-sm outline-none"
-                />
-              </div>
-            </div>
+            {error && (
+              <p className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
+                {error}
+              </p>
+            )}
 
             <button
               type="submit"
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#6650d9] py-3 text-sm font-semibold text-white transition hover:bg-[#5540c0]"
+              disabled={startingChat || !currentPage}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-3 font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Start Chat
-              <MessageCircle size={17} />
+              {startingChat
+                ? "Starting chat..."
+                : !currentPage
+                  ? "Connecting to website..."
+                  : "Start Chat"}
+
+              {!startingChat && <ArrowLeft size={17} />}
             </button>
           </form>
 
-          <p className="mt-5 text-center text-[10px] leading-5 text-gray-400">
-            Your details will help our support team assist you better.
+          <p className="mt-auto pt-6 text-center text-xs text-gray-400">
+            Powered by BulkChat
           </p>
         </div>
       ) : (
-        /* Chat Interface */
+
+        /* Chat Window */
         <>
-          <div className="border-b border-gray-100 bg-white px-4 py-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-gray-800">
-                  {customer.name}
-                </p>
-                <p className="mt-1 text-xs text-gray-400">
-                  {customer.email}
-                </p>
-              </div>
+          <div className="flex-1 space-y-4 overflow-y-auto bg-gray-50 p-4">
 
-              <button
-                type="button"
-                onClick={() => setChatStarted(false)}
-                className="flex items-center gap-1 text-xs font-medium text-[#6650d9]"
-              >
-                <ArrowLeft size={14} />
-                Back
-              </button>
-            </div>
-          </div>
-
-          <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-5">
-            <div className="mb-2 text-center">
-              <p className="text-xs text-gray-400">
-                Welcome to BulkChat
-              </p>
-              <p className="mt-1 text-xs text-gray-400">
-                Our support team is ready to help you.
-              </p>
+            <div className="mx-auto max-w-[85%] rounded-xl bg-blue-50 p-3 text-center text-sm text-gray-600">
+              Hi {customer.name}! How can we help you today?
             </div>
 
-            {messages.map((msg) => {
-              const isCustomer = msg.sender === "customer";
+            {messages.map((item, index) => {
+              const isVisitor =
+                item.senderType === "visitor" ||
+                item.sender === "visitor";
 
               return (
                 <div
-                  key={msg.id}
-                  className={`flex items-end gap-2 ${
-                    isCustomer ? "justify-end" : "justify-start"
+                  key={item._id || item.id || index}
+                  className={`flex ${
+                    isVisitor ? "justify-end" : "justify-start"
                   }`}
                 >
-                  {!isCustomer && (
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#eeeaff] text-[#6650d9]">
-                      <MessageCircle size={16} />
-                    </div>
-                  )}
-
                   <div
                     className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm ${
-                      isCustomer
-                        ? "rounded-br-sm bg-[#6650d9] text-white"
-                        : "rounded-bl-sm border border-gray-100 bg-white text-gray-700"
+                      isVisitor
+                        ? "rounded-br-sm bg-blue-600 text-white"
+                        : "rounded-bl-sm border border-gray-100 bg-white text-gray-800"
                     }`}
                   >
-                    <p className="break-words text-sm leading-5">
-                      {msg.text}
+                    <p className="break-words text-sm">
+                      {item.content || item.message}
                     </p>
 
                     <p
                       className={`mt-1 text-right text-[10px] ${
-                        isCustomer
-                          ? "text-purple-200"
+                        isVisitor
+                          ? "text-blue-100"
                           : "text-gray-400"
                       }`}
                     >
-                      {formatTime(msg.time)}
+                      {formatTime(
+                        item.createdAt || item.timestamp
+                      )}
                     </p>
                   </div>
                 </div>
@@ -300,38 +468,42 @@ function EmbeddedChatPage() {
             <div ref={messagesEndRef} />
           </div>
 
-          <div className="border-t border-gray-200 bg-white p-3">
-            <form
-              onSubmit={handleSendMessage}
-              className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 transition focus-within:border-[#6650d9] focus-within:ring-2 focus-within:ring-[#6650d9]/10"
-            >
-              <input
-                type="text"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Type your message..."
-                className="min-w-0 flex-1 bg-transparent py-1 text-sm text-gray-700 outline-none placeholder:text-gray-400"
-              />
-
-              <button
-                type="submit"
-                disabled={!message.trim()}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#6650d9] text-white transition hover:bg-[#5540c0] disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="Send message"
-              >
-                <Send size={16} />
-              </button>
-            </form>
-
-            <p className="mt-2 text-center text-[10px] text-gray-400">
-              Powered by BulkChat
+          {error && (
+            <p className="bg-red-50 px-4 py-2 text-xs text-red-600">
+              {error}
             </p>
-          </div>
+          )}
+
+          {/* Message Input */}
+          <form
+            onSubmit={handleSendMessage}
+            className="flex items-center gap-2 border-t border-gray-200 bg-white p-3"
+          >
+            <input
+              type="text"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder={
+                connected
+                  ? "Type your message..."
+                  : "Connecting..."
+              }
+              disabled={!connected}
+              className="min-w-0 flex-1 rounded-full bg-gray-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-60"
+            />
+
+            <button
+              type="submit"
+              disabled={!connected || !message.trim()}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Send size={18} />
+            </button>
+          </form>
         </>
       )}
     </div>
   );
-}
+};
 
 export default EmbeddedChatPage;
