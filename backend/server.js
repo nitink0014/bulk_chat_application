@@ -16,6 +16,7 @@ import visitorRoutes from './routes/visitorRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
 
 import initializeChatSockets from './sockets/chatSocket.js';
+import notificationRoutes from './routes/notificationRoutes.js';
 
 dotenv.config();
 
@@ -73,6 +74,7 @@ app.use('/api/agent', agentRoutes);
 app.use('/api/widgets', widgetRoutes);
 app.use('/api/visitors', visitorRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Start server
 const PORT = process.env.PORT || 5000;
@@ -81,7 +83,7 @@ const startServer = async () => {
     try {
         await connectDB();
 
-        httpServer.listen(PORT, () => {
+        httpServer.listen(PORT, '0.0.0.0', () => {
             console.log(`Server running on port ${PORT}`);
             console.log('Socket.IO server is ready');
         });

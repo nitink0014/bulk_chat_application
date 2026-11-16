@@ -3,6 +3,7 @@ import Widget from '../models/Widget.js';
 import Visitor from '../models/Visitor.js';
 import getDeviceInfo from '../utils/deviceInfo.js';
 import mongoose from 'mongoose';
+
 // @desc    Track a website visitor
 // @route   POST /api/visitors/track
 // @access  Public (Widget Public Key)
@@ -16,7 +17,7 @@ export const trackVisitor = async (req, res) => {
             referrer,
         } = req.body;
 
-        // Validate required fields
+        // 1. Validate required fields
         if (!publicKey || !visitorId) {
             return res.status(400).json({
                 success: false,
@@ -35,7 +36,7 @@ export const trackVisitor = async (req, res) => {
             });
         }
 
-        // Find widget
+        // 2. Find active widget
         const widget = await Widget.findOne({
             publicKey,
             isActive: true,
@@ -48,7 +49,12 @@ export const trackVisitor = async (req, res) => {
             });
         }
 
-        // Verify website origin when provided by the browser
+        // 3. Get allowed domains
+        const allowedDomains = widget.allowedDomains.map(
+            (domain) => domain.toLowerCase()
+        );
+
+        // 4. Validate request origin
         const origin = req.get('origin');
 
         if (origin) {
@@ -63,10 +69,6 @@ export const trackVisitor = async (req, res) => {
                 });
             }
 
-            const allowedDomains = widget.allowedDomains.map(
-                (domain) => domain.toLowerCase()
-            );
-
             if (!allowedDomains.includes(originHostname)) {
                 return res.status(403).json({
                     success: false,
@@ -75,7 +77,7 @@ export const trackVisitor = async (req, res) => {
             }
         }
 
-        // Validate current page URL
+        // 5. Validate customer website URL
         let pageUrl = null;
 
         if (currentPage) {
@@ -86,8 +88,22 @@ export const trackVisitor = async (req, res) => {
                     throw new Error('Invalid protocol');
                 }
 
+                const pageHostname = parsedPage.hostname.toLowerCase();
+
+                if (!allowedDomains.includes(pageHostname)) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'This customer website domain is not allowed',
+                    });
+                }
+
                 pageUrl = parsedPage.href;
-            } catch {
+
+            } catch (error) {
+                if (error.message === 'This customer website domain is not allowed') {
+                    throw error;
+                }
+
                 return res.status(400).json({
                     success: false,
                     message: 'Invalid current page URL',
@@ -95,13 +111,27 @@ export const trackVisitor = async (req, res) => {
             }
         }
 
-        // Get browser, OS, device and IP information
-        const deviceInfo = getDeviceInfo(req);
+        // 6. Validate referrer
+        let validReferrer = null;
 
+        if (referrer) {
+            try {
+                const parsedReferrer = new URL(referrer);
+
+                if (['http:', 'https:'].includes(parsedReferrer.protocol)) {
+                    validReferrer = parsedReferrer.href;
+                }
+            } catch {
+                validReferrer = null;
+            }
+        }
+
+        // 7. Get browser, OS, device and IP information
+        const deviceInfo = getDeviceInfo(req);
         const now = new Date();
 
-        // Create visitor or update existing visitor
-        await Visitor.findOneAndUpdate(
+        // 8. Create or update visitor
+        const visitor = await Visitor.findOneAndUpdate(
             {
                 widget: widget._id,
                 visitorId: visitorId.trim(),
@@ -114,7 +144,7 @@ export const trackVisitor = async (req, res) => {
                     operatingSystem: deviceInfo.operatingSystem,
                     device: deviceInfo.device,
                     currentPage: pageUrl,
-                    referrer: referrer || null,
+                    referrer: validReferrer,
                     isOnline: true,
                     lastSeen: now,
                 },
@@ -133,7 +163,7 @@ export const trackVisitor = async (req, res) => {
         return res.status(200).json({
             success: true,
             message: 'Visitor tracked successfully',
-            visitorId: visitorId.trim(),
+            visitorId: visitor.visitorId,
         });
 
     } catch (error) {
@@ -146,20 +176,37 @@ export const trackVisitor = async (req, res) => {
     }
 };
 
+
 // @desc    Get all visitors belonging to logged-in agent
 // @route   GET /api/visitors
 // @access  Private (Agent)
 
 export const getVisitors = async (req, res) => {
     try {
-        // Find all widgets owned by the logged-in agent
+        // 1. Find widgets owned by logged-in agent
         const widgets = await Widget.find({
             owner: req.user._id,
         }).select('_id');
 
         const widgetIds = widgets.map((widget) => widget._id);
 
-        // Find visitors belonging to those widgets
+        // 2. Mark visitors offline after 60 seconds
+        const inactiveTime = new Date(Date.now() - 60 * 1000);
+
+        await Visitor.updateMany(
+            {
+                widget: { $in: widgetIds },
+                isOnline: true,
+                lastSeen: { $lt: inactiveTime },
+            },
+            {
+                $set: {
+                    isOnline: false,
+                },
+            }
+        );
+
+        // 3. Fetch visitors
         const visitors = await Visitor.find({
             widget: { $in: widgetIds },
         })
@@ -181,11 +228,17 @@ export const getVisitors = async (req, res) => {
         });
     }
 };
+
+
+// @desc    Get visitor by ID
+// @route   GET /api/visitors/:id
+// @access  Private (Agent)
+
 export const getVisitorById = async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Validate MongoDB ID
+        // 1. Validate MongoDB ID
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({
                 success: false,
@@ -193,14 +246,14 @@ export const getVisitorById = async (req, res) => {
             });
         }
 
-        // Find widgets owned by logged-in agent
+        // 2. Find widgets owned by logged-in agent
         const widgets = await Widget.find({
             owner: req.user._id,
         }).select('_id');
 
         const widgetIds = widgets.map((widget) => widget._id);
 
-        // Find visitor belonging to agent's widgets
+        // 3. Find visitor belonging to agent's widgets
         const visitor = await Visitor.findOne({
             _id: id,
             widget: { $in: widgetIds },

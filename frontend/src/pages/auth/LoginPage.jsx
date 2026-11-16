@@ -30,7 +30,7 @@ function LoginPage() {
       const user = response.data.user;
 
       // Only support agents can access agent dashboard.
-      if (user.role !== "admin") {
+      if (user.role !== "agent") {
         try {
           await api.post("/auth/logout");
         } catch (logoutError) {

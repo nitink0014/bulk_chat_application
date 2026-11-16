@@ -14,6 +14,14 @@ const router = express.Router();
 // Public route: Track website visitor
 router.post('/track', trackVisitor);
 
+// Temporary test route
+router.get('/test', (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: 'Visitor route is working'
+    });
+});
+
 // Private route: Get all visitors belonging to logged-in agent
 router.get('/', protect, getVisitors);
 

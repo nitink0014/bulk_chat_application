@@ -10,6 +10,7 @@ import EmbeddedChatPage from "./pages/support/EmbeddedChatPage";
 import AgentDashboardPage from "./pages/agent/AgentDashboardPage";
 import AgentVisitorsPage from "./pages/agent/AgentVisitorsPage";
 import AgentSettingsPage from "./pages/agent/AgentSettingsPage";
+import AgentWidgetsPage from "./pages/agent/AgentWidgetsPage";
 
 function App() {
   return (
@@ -33,6 +34,7 @@ function App() {
         {/* Agent workspace */}
         <Route path="/agent/dashboard" element={<AgentDashboardPage />} />
         <Route path="/agent/visitors" element={<AgentVisitorsPage />} />
+        <Route path="/agent/widgets" element={<AgentWidgetsPage />} />
         <Route path="/agent/settings" element={<AgentSettingsPage />} />
 
         {/* Unknown routes */}

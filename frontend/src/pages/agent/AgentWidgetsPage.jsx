@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   MessageCircle,
@@ -15,9 +15,21 @@ import {
   LoaderCircle,
   AlertCircle,
   CheckCircle2,
+  RefreshCw,
+  ExternalLink,
+  Code,
 } from "lucide-react";
 
 import api from "../../services/api";
+
+// Generate installation script for a widget
+const getInstallationScript = (publicKey) => {
+  return `<script
+  src="http://localhost:5173/widget.js"
+  data-key="${publicKey}"
+  async
+></script>`;
+};
 
 function AgentWidgetsPage() {
   const navigate = useNavigate();
@@ -28,10 +40,39 @@ function AgentWidgetsPage() {
     allowedDomains: "",
   });
 
+  const [widgets, setWidgets] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [fetchingWidgets, setFetchingWidgets] = useState(true);
   const [error, setError] = useState("");
   const [createdWidget, setCreatedWidget] = useState(null);
-  const [copied, setCopied] = useState(false);
+
+  const [copiedWidgetId, setCopiedWidgetId] = useState("");
+  const [copiedScriptWidgetId, setCopiedScriptWidgetId] = useState("");
+
+  // Fetch all widgets from backend
+  const fetchWidgets = async () => {
+    try {
+      setFetchingWidgets(true);
+
+      const response = await api.get("/widgets");
+
+      setWidgets(response.data.widgets || []);
+    } catch (err) {
+      console.error("Fetch Widgets Error:", err);
+
+      setError(
+        err.response?.data?.message ||
+          "Unable to fetch widgets. Please try again."
+      );
+    } finally {
+      setFetchingWidgets(false);
+    }
+  };
+
+  // Fetch widgets when page loads
+  useEffect(() => {
+    fetchWidgets();
+  }, []);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -44,12 +85,12 @@ function AgentWidgetsPage() {
     setError("");
   };
 
+  // Create new widget
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     setError("");
     setCreatedWidget(null);
-    setCopied(false);
 
     const allowedDomains = formData.allowedDomains
       .split(",")
@@ -65,7 +106,14 @@ function AgentWidgetsPage() {
         allowedDomains,
       });
 
-      setCreatedWidget(response.data.widget);
+      const newWidget = response.data.widget;
+
+      setCreatedWidget(newWidget);
+
+      setWidgets((prev) => [
+        newWidget,
+        ...prev.filter((widget) => widget._id !== newWidget._id),
+      ]);
 
       setFormData({
         name: "",
@@ -84,18 +132,39 @@ function AgentWidgetsPage() {
     }
   };
 
-  const handleCopy = async () => {
-    if (!createdWidget?.publicKey) return;
+  // Copy public key
+  const handleCopy = async (widget) => {
+    if (!widget?.publicKey) return;
 
     try {
-      await navigator.clipboard.writeText(createdWidget.publicKey);
-      setCopied(true);
+      await navigator.clipboard.writeText(widget.publicKey);
+
+      setCopiedWidgetId(widget._id);
 
       setTimeout(() => {
-        setCopied(false);
+        setCopiedWidgetId("");
       }, 2000);
     } catch {
       setError("Unable to copy Public Key. Please copy it manually.");
+    }
+  };
+
+  // Copy installation script
+  const handleCopyScript = async (widget) => {
+    if (!widget?.publicKey) return;
+
+    try {
+      const script = getInstallationScript(widget.publicKey);
+
+      await navigator.clipboard.writeText(script);
+
+      setCopiedScriptWidgetId(widget._id);
+
+      setTimeout(() => {
+        setCopiedScriptWidgetId("");
+      }, 2000);
+    } catch {
+      setError("Unable to copy installation script. Please try again.");
     }
   };
 
@@ -146,7 +215,7 @@ function AgentWidgetsPage() {
             </h1>
 
             <p className="mt-1 text-sm text-gray-500">
-              Create a chat widget for your website.
+              Create and manage your website chat widgets.
             </p>
           </div>
 
@@ -175,7 +244,8 @@ function AgentWidgetsPage() {
 
                 <p className="mt-2 text-sm leading-6 text-purple-100">
                   Create a unique BulkChat widget for your website.
-                  You will receive a Public Key after creation.
+                  You will receive a Public Key and installation script
+                  after creation.
                 </p>
               </div>
             </div>
@@ -215,6 +285,7 @@ function AgentWidgetsPage() {
                 </div>
               </div>
 
+              {/* Public Key */}
               <div className="mt-5 rounded-xl bg-gray-50 p-4">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
                   Your Public Key
@@ -227,21 +298,244 @@ function AgentWidgetsPage() {
 
                   <button
                     type="button"
-                    onClick={handleCopy}
+                    onClick={() => handleCopy(createdWidget)}
                     className="flex shrink-0 items-center gap-2 rounded-lg bg-[#6650d9] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#5140b5]"
                   >
-                    {copied ? <Check size={16} /> : <Copy size={16} />}
-                    {copied ? "Copied" : "Copy"}
+                    {copiedWidgetId === createdWidget._id ? (
+                      <Check size={16} />
+                    ) : (
+                      <Copy size={16} />
+                    )}
+
+                    {copiedWidgetId === createdWidget._id
+                      ? "Copied"
+                      : "Copy"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Installation Script */}
+              <div className="mt-5">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Installation Script
+                </p>
+
+                <div className="rounded-xl bg-gray-900 p-4">
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-all text-xs leading-6 text-green-400">
+                    {getInstallationScript(createdWidget.publicKey)}
+                  </pre>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCopyScript(createdWidget)}
+                    className="mt-4 flex items-center gap-2 rounded-lg bg-[#6650d9] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#5140b5]"
+                  >
+                    {copiedScriptWidgetId === createdWidget._id ? (
+                      <Check size={14} />
+                    ) : (
+                      <Copy size={14} />
+                    )}
+
+                    {copiedScriptWidgetId === createdWidget._id
+                      ? "Copied"
+                      : "Copy Installation Script"}
                   </button>
                 </div>
               </div>
 
               <p className="mt-3 text-xs text-gray-500">
-                Keep this key available. It will be needed during website
-                widget integration.
+                Add this script before the closing body tag of your
+                customer website.
               </p>
             </section>
           )}
+
+          {/* My Widgets */}
+          <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 p-5 sm:p-6">
+              <div>
+                <h2 className="font-bold text-gray-900">
+                  My Widgets ({widgets.length})
+                </h2>
+
+                <p className="mt-1 text-xs text-gray-500">
+                  All your connected website widgets.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={fetchWidgets}
+                disabled={fetchingWidgets}
+                className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+              >
+                <RefreshCw
+                  size={15}
+                  className={fetchingWidgets ? "animate-spin" : ""}
+                />
+                Refresh
+              </button>
+            </div>
+
+            <div className="space-y-4 p-5 sm:p-6">
+              {fetchingWidgets ? (
+                <div className="flex flex-col items-center justify-center py-10 text-gray-400">
+                  <LoaderCircle
+                    size={30}
+                    className="animate-spin text-[#6650d9]"
+                  />
+
+                  <p className="mt-3 text-sm">
+                    Loading your widgets...
+                  </p>
+                </div>
+              ) : widgets.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 text-center">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#eeeaff] text-[#6650d9]">
+                    <Globe size={26} />
+                  </div>
+
+                  <h3 className="mt-4 font-semibold text-gray-800">
+                    No widgets found
+                  </h3>
+
+                  <p className="mt-1 text-sm text-gray-500">
+                    Create your first website widget below.
+                  </p>
+                </div>
+              ) : (
+                widgets.map((widget) => (
+                  <div
+                    key={widget._id}
+                    className="rounded-xl border border-gray-200 p-4 transition hover:border-[#c9c0fa] sm:p-5"
+                  >
+                    {/* Widget Information */}
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#eeeaff] text-[#6650d9]">
+                          <Globe size={21} />
+                        </div>
+
+                        <div className="min-w-0">
+                          <h3 className="break-words font-bold text-gray-900">
+                            {widget.name}
+                          </h3>
+
+                          <a
+                            href={widget.websiteUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-1 flex items-center gap-1 break-all text-xs text-[#6650d9] hover:underline"
+                          >
+                            {widget.websiteUrl}
+                            <ExternalLink
+                              size={12}
+                              className="shrink-0"
+                            />
+                          </a>
+                        </div>
+                      </div>
+
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                          widget.isActive
+                            ? "bg-green-50 text-green-700"
+                            : "bg-gray-100 text-gray-500"
+                        }`}
+                      >
+                        {widget.isActive ? "Active" : "Inactive"}
+                      </span>
+                    </div>
+
+                    {/* Public Key */}
+                    <div className="mt-5 rounded-lg bg-gray-50 p-3">
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                        Public Key
+                      </p>
+
+                      <div className="flex flex-wrap items-center gap-3">
+                        <code className="min-w-0 flex-1 break-all text-xs text-gray-700">
+                          {widget.publicKey}
+                        </code>
+
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(widget)}
+                          className="flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-[#6650d9] shadow-sm transition hover:bg-[#eeeaff]"
+                        >
+                          {copiedWidgetId === widget._id ? (
+                            <Check size={14} />
+                          ) : (
+                            <Copy size={14} />
+                          )}
+
+                          {copiedWidgetId === widget._id
+                            ? "Copied"
+                            : "Copy"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Allowed Domains */}
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold text-gray-500">
+                        Allowed Domains
+                      </p>
+
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {widget.allowedDomains?.map((domain) => (
+                          <span
+                            key={domain}
+                            className="rounded-md bg-gray-100 px-2.5 py-1 text-xs text-gray-600"
+                          >
+                            {domain}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Installation Script */}
+                    <div className="mt-5">
+                      <div className="mb-2 flex items-center gap-2">
+                        <Code size={15} className="text-[#6650d9]" />
+
+                        <p className="text-xs font-semibold text-gray-500">
+                          Installation Script
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg bg-gray-900 p-4">
+                        <pre className="overflow-x-auto whitespace-pre-wrap break-all text-xs leading-6 text-green-400">
+                          {getInstallationScript(widget.publicKey)}
+                        </pre>
+
+                        <button
+                          type="button"
+                          onClick={() => handleCopyScript(widget)}
+                          className="mt-3 flex items-center gap-2 rounded-lg bg-[#6650d9] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#5140b5]"
+                        >
+                          {copiedScriptWidgetId === widget._id ? (
+                            <Check size={14} />
+                          ) : (
+                            <Copy size={14} />
+                          )}
+
+                          {copiedScriptWidgetId === widget._id
+                            ? "Copied"
+                            : "Copy Installation Script"}
+                        </button>
+                      </div>
+
+                      <p className="mt-2 text-xs text-gray-400">
+                        Add this script before the closing body tag
+                        of your customer website.
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
 
           {/* Create Widget Form */}
           <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
@@ -322,6 +616,7 @@ function AgentWidgetsPage() {
                   className="mb-2 block text-sm font-semibold text-gray-700"
                 >
                   Allowed Domains
+
                   <span className="ml-2 font-normal text-gray-400">
                     (Optional)
                   </span>
@@ -339,8 +634,8 @@ function AgentWidgetsPage() {
                 />
 
                 <p className="mt-1.5 text-xs text-gray-400">
-                  Separate multiple domains with commas. Leave blank to use
-                  the website domain automatically.
+                  Separate multiple domains with commas. Leave blank
+                  to use the website domain automatically.
                 </p>
               </div>
 
@@ -357,7 +652,10 @@ function AgentWidgetsPage() {
                 >
                   {loading ? (
                     <>
-                      <LoaderCircle size={17} className="animate-spin" />
+                      <LoaderCircle
+                        size={17}
+                        className="animate-spin"
+                      />
                       Creating...
                     </>
                   ) : (

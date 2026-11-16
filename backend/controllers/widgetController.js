@@ -61,3 +61,71 @@ export const createWidget = async (req, res) => {
     });
   }
 };
+// @desc Get all widgets belonging to logged-in agent
+// @route GET /api/widgets
+// @access Private (Agent)
+
+export const getWidgets = async (req, res) => {
+  try {
+    const widgets = await Widget.find({
+      owner: req.user._id,
+    }).sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      count: widgets.length,
+      widgets,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+
+// @desc Get public widget configuration
+// @route GET /api/widgets/public/:publicKey
+// @access Public
+
+export const getPublicWidget = async (req, res) => {
+  try {
+    const { publicKey } = req.params;
+
+    const widget = await Widget.findOne({
+      publicKey,
+      isActive: true,
+    }).select('name publicKey allowedDomains settings');
+
+    if (!widget) {
+      return res.status(404).json({
+        success: false,
+        message: 'Widget not found or inactive',
+      });
+    }
+
+    const origin = req.headers.origin;
+
+    if (origin) {
+      const hostname = new URL(origin).hostname;
+
+      if (!widget.allowedDomains.includes(hostname)) {
+        return res.status(403).json({
+          success: false,
+          message: 'This domain is not allowed',
+        });
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      widget,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};

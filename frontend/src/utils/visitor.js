@@ -1,10 +1,25 @@
 
 import api from "../services/api";
 
-const getVisitorStorageKey = (publicKey) => {
-  return `bulkchat_visitor_${publicKey}`;
+// Get customer website URL from iframe referrer
+const getCustomerPageUrl = () => {
+  return document.referrer || window.location.href;
 };
 
+// Generate a separate visitor ID for each widget and website
+const getVisitorStorageKey = (publicKey) => {
+  let hostname = "unknown";
+
+  try {
+    hostname = new URL(getCustomerPageUrl()).hostname;
+  } catch {
+    // Keep fallback hostname
+  }
+
+  return `bulkchat_visitor_${publicKey}_${hostname}`;
+};
+
+// Get or create visitor ID
 export const getVisitorId = (publicKey) => {
   if (!publicKey) {
     throw new Error("Widget public key is missing");
@@ -22,11 +37,16 @@ export const getVisitorId = (publicKey) => {
   return visitorId;
 };
 
-export const trackVisitor = async (publicKey, visitorId) => {
+// Track website visitor
+export const trackVisitor = async (
+  publicKey,
+  visitorId,
+  customerPageUrl
+) => {
   const response = await api.post("/visitors/track", {
     publicKey,
     visitorId,
-    currentPage: window.location.href,
+    currentPage: customerPageUrl,
     referrer: document.referrer || "",
   });
 

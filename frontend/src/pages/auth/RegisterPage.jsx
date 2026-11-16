@@ -24,9 +24,10 @@ function RegisterPage() {
 
     const formData = new FormData(e.currentTarget);
 
-    const name = formData.get("name").trim();
-    const email = formData.get("email").trim().toLowerCase();
-    const password = formData.get("password");
+    const name = formData.get("name")?.trim() || "";
+    const email =
+      formData.get("email")?.trim().toLowerCase() || "";
+    const password = formData.get("password") || "";
 
     try {
       const response = await api.post("/auth/register", {
@@ -36,7 +37,8 @@ function RegisterPage() {
       });
 
       setSuccess(
-        response.data.message || "Agent account created successfully."
+        response.data.message ||
+          "Agent account created successfully."
       );
 
       e.currentTarget.reset();
@@ -44,11 +46,10 @@ function RegisterPage() {
       setTimeout(() => {
         navigate("/agent/login", { replace: true });
       }, 1200);
-
     } catch (error) {
       setError(
         error.response?.data?.message ||
-        "Registration failed. Please try again."
+          "Registration failed. Please try again."
       );
     } finally {
       setLoading(false);
@@ -92,6 +93,7 @@ function RegisterPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Name */}
             <div>
               <label
                 htmlFor="name"
@@ -111,6 +113,7 @@ function RegisterPage() {
               />
             </div>
 
+            {/* Email */}
             <div>
               <label
                 htmlFor="email"
@@ -130,6 +133,7 @@ function RegisterPage() {
               />
             </div>
 
+            {/* Password */}
             <div>
               <label
                 htmlFor="password"
@@ -154,24 +158,30 @@ function RegisterPage() {
               </p>
             </div>
 
+            {/* Error Message */}
             {error && (
               <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
                 {error}
               </div>
             )}
 
+            {/* Success Message */}
             {success && (
               <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
                 {success}
               </div>
             )}
 
+            {/* Submit Button */}
             <button
               type="submit"
               disabled={loading}
               className="w-full h-12 bg-[#6650d9] hover:bg-[#5140b5] disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transition duration-200 hover:-translate-y-0.5"
             >
-              {loading ? "Creating account..." : "Create agent account"}
+              {loading
+                ? "Creating account..."
+                : "Create agent account"}
+
               {!loading && <ArrowRight size={17} />}
             </button>
           </form>
@@ -200,6 +210,7 @@ function RegisterPage() {
         </div>
       </main>
 
+      {/* Footer */}
       <footer className="text-center text-xs text-[#9999a8] py-5">
         © 2026 BulkChat. All rights reserved.
       </footer>

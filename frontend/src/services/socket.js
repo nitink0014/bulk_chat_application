@@ -4,12 +4,18 @@ import { io } from "socket.io-client";
 const SOCKET_URL =
   import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 
-export const connectVisitorSocket = (publicKey, visitorId) => {
+// Visitor Socket
+export const connectVisitorSocket = (
+  publicKey,
+  visitorId,
+  currentPage
+) => {
   return io(SOCKET_URL, {
     auth: {
       role: "visitor",
       publicKey,
       visitorId,
+      currentPage,
     },
     transports: ["websocket", "polling"],
     reconnection: true,
@@ -18,6 +24,7 @@ export const connectVisitorSocket = (publicKey, visitorId) => {
   });
 };
 
+// Agent Socket
 export const connectAgentSocket = () => {
   return io(SOCKET_URL, {
     auth: {
