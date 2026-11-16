@@ -16,8 +16,8 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Default route */}
-        <Route path="/" element={<Navigate to="/support" replace />} />
+        {/* Default route - Login */}
+        <Route path="/" element={<Navigate to="/agent/login" replace />} />
 
         {/* Agent authentication */}
         <Route path="/agent/login" element={<LoginPage />} />
@@ -38,7 +38,7 @@ function App() {
         <Route path="/agent/settings" element={<AgentSettingsPage />} />
 
         {/* Unknown routes */}
-        <Route path="*" element={<Navigate to="/support" replace />} />
+        <Route path="*" element={<Navigate to="/agent/login" replace />} />
       </Routes>
     </BrowserRouter>
   );
