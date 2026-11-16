@@ -14,20 +14,20 @@ import {
 } from '../services/pushNotificationService.js';
 
 
-// SEND PUSH NOTIFICATION TO ASSIGNED AGENT
+// ============================================
+// PUSH NOTIFICATION
+// ============================================
+
 const notifyAssignedAgent = async (conversation, message) => {
     try {
-        if (!conversation.agent) {
-            return;
-        }
+        if (!conversation.agent) return;
 
-        // Find all devices registered by the assigned agent
         const subscriptions = await PushSubscription.find({
             agent: conversation.agent,
         }).lean();
 
         if (!subscriptions.length) {
-            console.log('No push subscriptions found for assigned agent.');
+            console.log('No push subscriptions found.');
             return;
         }
 
@@ -47,9 +47,8 @@ const notifyAssignedAgent = async (conversation, message) => {
             },
         };
 
-        // Send notification to all registered devices
         const results = await Promise.allSettled(
-            subscriptions.map((subscription) =>
+            subscriptions.map(subscription =>
                 sendPushNotification(subscription, payload)
             )
         );
@@ -59,21 +58,33 @@ const notifyAssignedAgent = async (conversation, message) => {
         );
 
     } catch (error) {
-        console.error('Agent Push Notification Failed:', error);
+        console.error('Push Notification Error:', error);
     }
 };
 
 
+// ============================================
+// SOCKET INITIALIZATION
+// ============================================
+
 const initializeChatSockets = (io) => {
 
-    // AUTHENTICATION
+    // ========================================
+    // AUTHENTICATION MIDDLEWARE
+    // ========================================
+
     io.use(async (socket, next) => {
         try {
             const auth = socket.handshake.auth || {};
 
             // VISITOR AUTHENTICATION
             if (auth.role === 'visitor') {
-                const { publicKey, visitorId, currentPage } = auth;
+
+                const {
+                    publicKey,
+                    visitorId,
+                    currentPage,
+                } = auth;
 
                 if (!publicKey || !visitorId) {
                     return next(
@@ -81,19 +92,21 @@ const initializeChatSockets = (io) => {
                     );
                 }
 
-                // Find active widget
                 const widget = await Widget.findOne({
                     publicKey,
                     isActive: true,
                 });
 
                 if (!widget) {
-                    return next(new Error('Widget not found or inactive'));
+                    return next(
+                        new Error('Widget not found or inactive')
+                    );
                 }
 
-                // Validate customer website domain
                 if (!currentPage) {
-                    return next(new Error('Customer website URL is required'));
+                    return next(
+                        new Error('Customer website URL is required')
+                    );
                 }
 
                 let hostname;
@@ -116,10 +129,11 @@ const initializeChatSockets = (io) => {
                 );
 
                 if (!allowedDomains.includes(hostname)) {
-                    return next(new Error('Website domain is not allowed'));
+                    return next(
+                        new Error('Website domain is not allowed')
+                    );
                 }
 
-                // Find visitor
                 const visitor = await Visitor.findOne({
                     widget: widget._id,
                     visitorId,
@@ -147,14 +161,17 @@ const initializeChatSockets = (io) => {
                 socket.handshake.headers.cookie || '';
 
             const cookies = Object.fromEntries(
-                cookieHeader.split(';').filter(Boolean).map(cookie => {
-                    const [key, ...value] = cookie.trim().split('=');
+                cookieHeader
+                    .split(';')
+                    .filter(Boolean)
+                    .map(cookie => {
+                        const [key, ...value] = cookie.trim().split('=');
 
-                    return [
-                        key,
-                        decodeURIComponent(value.join('=')),
-                    ];
-                })
+                        return [
+                            key,
+                            decodeURIComponent(value.join('=')),
+                        ];
+                    })
             );
 
             const token = cookies.bulkchat_token;
@@ -172,7 +189,9 @@ const initializeChatSockets = (io) => {
                 .select('-password');
 
             if (!user || !user.isActive) {
-                return next(new Error('Invalid or inactive agent'));
+                return next(
+                    new Error('Invalid or inactive agent')
+                );
             }
 
             socket.role = 'agent';
@@ -183,27 +202,42 @@ const initializeChatSockets = (io) => {
         } catch (error) {
             console.error('Socket Authentication Error:', error);
 
-            return next(new Error('Socket authentication failed'));
+            return next(
+                new Error('Socket authentication failed')
+            );
         }
     });
 
 
+    // ========================================
     // SOCKET CONNECTION
+    // ========================================
+
     io.on('connection', (socket) => {
 
+        console.log('Socket connected:', {
+            socketId: socket.id,
+            role: socket.role,
+        });
+
         if (socket.role === 'agent') {
+
             console.log(`Agent connected: ${socket.user._id}`);
 
             socket.join(`agent:${socket.user._id}`);
 
         } else {
+
             console.log(
                 `Visitor connected: ${socket.visitor.visitorId}`
             );
         }
 
 
+        // ====================================
         // JOIN CONVERSATION
+        // ====================================
+
         socket.on('join_conversation', async (data, callback) => {
             try {
                 const { conversationId } = data || {};
@@ -240,13 +274,28 @@ const initializeChatSockets = (io) => {
                 }
 
                 if (!conversation) {
+                    console.log('Conversation join rejected:', {
+                        role: socket.role,
+                        conversationId,
+                    });
+
                     return callback?.({
                         success: false,
                         message: 'Conversation not found or closed',
                     });
                 }
 
-                socket.join(`conversation:${conversationId}`);
+                const room = `conversation:${conversation._id}`;
+
+                await socket.join(room);
+
+                console.log('Conversation room joined:', {
+                    role: socket.role,
+                    socketId: socket.id,
+                    conversationId: conversation._id.toString(),
+                    room,
+                    joined: socket.rooms.has(room),
+                });
 
                 return callback?.({
                     success: true,
@@ -264,10 +313,16 @@ const initializeChatSockets = (io) => {
         });
 
 
+        // ====================================
         // SEND MESSAGE
+        // ====================================
+
         socket.on('send_message', async (data, callback) => {
             try {
-                const { conversationId, content } = data || {};
+                const {
+                    conversationId,
+                    content,
+                } = data || {};
 
                 if (
                     !mongoose.isValidObjectId(conversationId) ||
@@ -312,30 +367,46 @@ const initializeChatSockets = (io) => {
                     });
                 }
 
-                // Create message
+                // CREATE MESSAGE
                 const message = await Message.create({
                     conversation: conversation._id,
                     senderType: socket.role,
+
                     sender: socket.role === 'agent'
                         ? socket.user._id
                         : socket.visitor._id,
+
                     content: content.trim(),
                 });
 
-                // Update conversation
+                // UPDATE CONVERSATION
                 conversation.lastMessage = message.content;
                 conversation.lastMessageAt = message.createdAt;
 
                 await conversation.save();
 
-                // Broadcast message
-                io.to(`conversation:${conversationId}`).emit(
-                    'new_message',
-                    message
-                );
+                // BROADCAST MESSAGE
+                const room = `conversation:${conversation._id}`;
 
-                // Push notification only for visitor messages
-                if (socket.role === 'visitor' && conversation.agent) {
+                const connectedSockets = await io
+                    .in(room)
+                    .fetchSockets();
+
+                console.log('Broadcasting message:', {
+                    sender: socket.role,
+                    conversationId: conversation._id.toString(),
+                    room,
+                    connectedSockets: connectedSockets.length,
+                    socketIds: connectedSockets.map(s => s.id),
+                });
+
+                io.to(room).emit('new_message', message);
+
+                // PUSH NOTIFICATION FOR VISITOR MESSAGES
+                if (
+                    socket.role === 'visitor' &&
+                    conversation.agent
+                ) {
                     notifyAssignedAgent(conversation, message);
                 }
 
@@ -356,17 +427,18 @@ const initializeChatSockets = (io) => {
         });
 
 
+        // ====================================
         // DISCONNECT
-        socket.on('disconnect', () => {
-            if (socket.role === 'agent') {
-                console.log(
-                    `Agent disconnected: ${socket.user._id}`
-                );
-            } else {
-                console.log(
-                    `Visitor disconnected: ${socket.visitor.visitorId}`
-                );
-            }
+        // ====================================
+
+        socket.on('disconnect', (reason) => {
+
+            console.log('Socket disconnected:', {
+                socketId: socket.id,
+                role: socket.role,
+                reason,
+            });
+
         });
 
     });

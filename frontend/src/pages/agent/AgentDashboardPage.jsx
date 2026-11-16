@@ -81,7 +81,6 @@ const formatConversation = (item) => {
       item.status?.charAt(0).toUpperCase() +
       item.status?.slice(1),
     unread: item.unread || 0,
-    // Conversations returned by this agent's owned widgets are assigned to this agent.
     assignee: item.agent ? "me" : null,
   };
 };
@@ -126,7 +125,7 @@ function AgentDashboardPage() {
 
   const currentStatus = activeConversation?.status || "New";
 
-  // Fetch real conversations
+  // Fetch conversations
   useEffect(() => {
     let mounted = true;
 
@@ -186,6 +185,7 @@ function AgentDashboardPage() {
   // Agent Socket connection
   useEffect(() => {
     const socket = connectAgentSocket();
+
     socketRef.current = socket;
 
     socket.on("connect", () => {
@@ -195,6 +195,7 @@ function AgentDashboardPage() {
 
     socket.on("disconnect", () => {
       setSocketConnected(false);
+      console.log("Agent disconnected");
     });
 
     socket.on("connect_error", (err) => {
@@ -208,7 +209,55 @@ function AgentDashboardPage() {
     };
   }, []);
 
-  // Join active conversation
+  // Fetch existing messages when agent selects a conversation
+  useEffect(() => {
+    if (!activeConversation?._id || !activeVisitor?.id) return;
+
+    let cancelled = false;
+
+    const fetchMessages = async () => {
+      try {
+        console.log(
+          "Fetching messages for:",
+          activeConversation._id
+        );
+
+        const response = await api.get(
+          `/chat/${activeConversation._id}/messages`
+        );
+
+        if (cancelled) return;
+
+        const formattedMessages = (
+          response.data.messages || []
+        ).map(formatMessage);
+
+        setMessagesByVisitor((previous) => ({
+          ...previous,
+          [activeVisitor.id]: formattedMessages,
+        }));
+
+        console.log("Messages loaded:", formattedMessages);
+      } catch (err) {
+        console.error("Fetch Messages Error:", err);
+
+        if (!cancelled) {
+          setError(
+            err.response?.data?.message ||
+              "Unable to load messages."
+          );
+        }
+      }
+    };
+
+    fetchMessages();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversation?._id, activeVisitor?.id]);
+
+  // Join active conversation room
   useEffect(() => {
     const socket = socketRef.current;
 
@@ -216,10 +265,20 @@ function AgentDashboardPage() {
 
     socket.emit(
       "join_conversation",
-      { conversationId: activeConversation._id },
+      {
+        conversationId: activeConversation._id,
+      },
       (response) => {
-        if (!response?.success) {
-          console.error("Join failed:", response?.message);
+        if (response?.success) {
+          console.log(
+            "Joined conversation:",
+            activeConversation._id
+          );
+        } else {
+          console.error(
+            "Join failed:",
+            response?.message
+          );
         }
       }
     );
@@ -232,35 +291,56 @@ function AgentDashboardPage() {
     if (!socket) return;
 
     const handleNewMessage = (data) => {
+      console.log("New message received:", data);
+
       const conversationId =
         data.conversationId ||
         data.conversation?._id ||
+        data.conversation?.toString?.() ||
         data.conversation;
 
+      if (!conversationId) {
+        console.error("Message has no conversation ID:", data);
+        return;
+      }
+
       const conversation = conversations.find(
-        (item) => item._id === conversationId
+        (item) => item._id.toString() === conversationId.toString()
       );
 
-      if (!conversation) return;
+      if (!conversation) {
+        console.log(
+          "Message belongs to another conversation:",
+          conversationId
+        );
+        return;
+      }
 
       const newMessage = formatMessage(data);
 
       setMessagesByVisitor((previous) => {
         const existing = previous[conversation.visitorId] || [];
 
-        if (existing.some((item) => item.id === newMessage.id)) {
+        if (
+          existing.some(
+            (item) => item.id.toString() === newMessage.id.toString()
+          )
+        ) {
           return previous;
         }
 
         return {
           ...previous,
-          [conversation.visitorId]: [...existing, newMessage],
+          [conversation.visitorId]: [
+            ...existing,
+            newMessage,
+          ],
         };
       });
 
       setConversations((previous) =>
         previous.map((item) =>
-          item._id === conversationId
+          item._id.toString() === conversationId.toString()
             ? {
                 ...item,
                 message: newMessage.text,
@@ -280,7 +360,7 @@ function AgentDashboardPage() {
     };
   }, [conversations]);
 
-  // Visitors page selected visitor
+  // Handle visitor selected from Visitors page
   useEffect(() => {
     if (!location.state?.visitor) return;
 
@@ -321,9 +401,10 @@ function AgentDashboardPage() {
   const handleSelectConversation = (visitor) => {
     setActiveVisitor(visitor);
     setReply("");
+    setError("");
   };
 
-  // Persist conversation assignment through the backend
+  // Assign conversation to agent
   const handleAssignToMe = async () => {
     if (!activeConversation?._id || assigning) return;
 
@@ -337,7 +418,8 @@ function AgentDashboardPage() {
 
       if (!response.data?.success) {
         throw new Error(
-          response.data?.message || "Conversation could not be assigned."
+          response.data?.message ||
+            "Conversation could not be assigned."
         );
       }
 
@@ -365,7 +447,7 @@ function AgentDashboardPage() {
     }
   };
 
-  // Status change (local UI only for now)
+  // Status change (local UI only)
   const handleStatusChange = (newStatus) => {
     setConversations((previous) =>
       previous.map((item) =>
@@ -376,7 +458,7 @@ function AgentDashboardPage() {
     );
   };
 
-  // Send real message through Socket.IO
+  // Send message through Socket.IO
   const handleSendMessage = (e) => {
     e.preventDefault();
 
@@ -404,11 +486,15 @@ function AgentDashboardPage() {
         setSending(false);
 
         if (!response?.success) {
-          setError(response?.message || "Message could not be sent.");
+          setError(
+            response?.message || "Message could not be sent."
+          );
           return;
         }
 
         setReply("");
+
+        console.log("Message sent successfully:", response.data);
       }
     );
   };
@@ -489,16 +575,16 @@ function AgentDashboardPage() {
       {/* Conversations Panel */}
       <section className="flex w-[320px] shrink-0 flex-col border-r border-gray-200 bg-white">
         <div className="border-b border-gray-100 p-5">
-         <div className="flex items-center justify-between">
-  <h1 className="text-xl font-bold text-gray-900">
-    Inbox
-  </h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-xl font-bold text-gray-900">
+              Inbox
+            </h1>
 
-  <div className="flex items-center gap-2">
-    <NotificationSetup />
-    <MoreHorizontal size={21} className="text-gray-500" />
-  </div>
-</div>
+            <div className="flex items-center gap-2">
+              <NotificationSetup />
+              <MoreHorizontal size={21} className="text-gray-500" />
+            </div>
+          </div>
 
           <div className="mt-5 flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-3">
             <Search size={17} className="text-gray-400" />
@@ -619,7 +705,14 @@ function AgentDashboardPage() {
                   </h2>
 
                   <div className="mt-1 flex items-center gap-1.5">
-                    <Circle size={8} className={`fill-current ${activeVisitor.status === "Online" ? "text-green-500" : "text-gray-400"}`} />
+                    <Circle
+                      size={8}
+                      className={`fill-current ${
+                        activeVisitor.status === "Online"
+                          ? "text-green-500"
+                          : "text-gray-400"
+                      }`}
+                    />
 
                     <span className="text-xs text-gray-500">
                       {activeVisitor.status} · {currentStatus} conversation
@@ -706,7 +799,9 @@ function AgentDashboardPage() {
                   return (
                     <div
                       key={msg.id}
-                      className={`flex max-w-[75%] items-end gap-2 ${isAgent ? "self-end flex-row-reverse" : ""}`}
+                      className={`flex max-w-[75%] items-end gap-2 ${
+                        isAgent ? "self-end flex-row-reverse" : ""
+                      }`}
                     >
                       {!isAgent && (
                         <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${activeVisitor.color}`}>
@@ -714,12 +809,18 @@ function AgentDashboardPage() {
                         </div>
                       )}
 
-                      <div className={`rounded-2xl p-4 shadow-sm ${isAgent ? "rounded-br-sm bg-[#6650d9] text-white" : "rounded-bl-sm bg-white text-gray-700"}`}>
+                      <div className={`rounded-2xl p-4 shadow-sm ${
+                        isAgent
+                          ? "rounded-br-sm bg-[#6650d9] text-white"
+                          : "rounded-bl-sm bg-white text-gray-700"
+                      }`}>
                         <p className="whitespace-pre-wrap break-words text-sm leading-6">
                           {msg.text}
                         </p>
 
-                        <span className={`mt-2 block text-right text-[10px] ${isAgent ? "text-purple-200" : "text-gray-400"}`}>
+                        <span className={`mt-2 block text-right text-[10px] ${
+                          isAgent ? "text-purple-200" : "text-gray-400"
+                        }`}>
                           {msg.time}
                         </span>
                       </div>
@@ -821,7 +922,11 @@ function AgentDashboardPage() {
                 {activeVisitor.email}
               </p>
 
-              <span className={`mt-3 flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${activeVisitor.status === "Online" ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+              <span className={`mt-3 flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
+                activeVisitor.status === "Online"
+                  ? "bg-green-50 text-green-700"
+                  : "bg-gray-100 text-gray-500"
+              }`}>
                 <Circle size={7} className="fill-current" />
                 {activeVisitor.status}
               </span>
