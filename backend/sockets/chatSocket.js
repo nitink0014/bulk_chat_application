@@ -401,6 +401,16 @@ const initializeChatSockets = (io) => {
                 });
 
                 io.to(room).emit('new_message', message);
+                console.log('MESSAGE BROADCAST COMPLETED:', {
+    sender: socket.role,
+    conversationId: conversation._id.toString(),
+    room,
+    connectedSockets: connectedSockets.map(s => ({
+        id: s.id,
+        role: s.role,
+        rooms: [...s.rooms],
+    })),
+});
 
                 // PUSH NOTIFICATION FOR VISITOR MESSAGES
                 if (
