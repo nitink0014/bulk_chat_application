@@ -14,65 +14,82 @@ import agentRoutes from './routes/agentRoutes.js';
 import widgetRoutes from './routes/widgetRoutes.js';
 import visitorRoutes from './routes/visitorRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
 
 import initializeChatSockets from './sockets/chatSocket.js';
-import notificationRoutes from './routes/notificationRoutes.js';
 
 dotenv.config();
 
 const app = express();
-
-app.get("/", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "BulkChat API is running 🚀",
-  });
-});
-// Create HTTP server
 const httpServer = createServer(app);
 
-// Security middleware
+// Allowed frontend origins
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'https://bulk-chat-application-git-main-nitin-kumar4.vercel.app',
+  ...(process.env.CLIENT_URL || '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean),
+];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.log('Blocked by CORS:', origin);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+// Middleware
 app.use(helmet());
-
-// CORS configuration
-app.use(cors({
-    origin: process.env.CLIENT_URL,
-    credentials: true,
-}));
-
-// Body parsing middleware
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Socket.IO configuration
-const io = new Server(httpServer, {
-    cors: {
-        origin: process.env.CLIENT_URL,
-        credentials: true,
-        methods: ['GET', 'POST'],
-    },
+// Root health check
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'BulkChat API is running 🚀',
+  });
 });
 
-// Initialize chat sockets
-initializeChatSockets(io);
-
-// Health check
+// API health check
 app.get('/api/health', (req, res) => {
-    res.status(200).json({
-        success: true,
-        message: 'Bulk Chat API is running',
-        environment: process.env.NODE_ENV,
-    });
+  res.status(200).json({
+    success: true,
+    message: 'Bulk Chat API is running',
+    environment: process.env.NODE_ENV,
+  });
 });
 
 // Widget test
 app.post('/api/widgets/test', (req, res) => {
-    res.status(200).json({
-        success: true,
-        message: 'Widget route is working',
-    });
+  res.status(200).json({
+    success: true,
+    message: 'Widget route is working',
+  });
 });
+
+// Socket.IO configuration
+const io = new Server(httpServer, {
+  cors: {
+    origin: allowedOrigins,
+    credentials: true,
+    methods: ['GET', 'POST'],
+  },
+});
+
+initializeChatSockets(io);
 
 // API routes
 app.use('/api/auth', authRoutes);
@@ -86,18 +103,18 @@ app.use('/api/notifications', notificationRoutes);
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
-    try {
-        await connectDB();
+  try {
+    await connectDB();
 
-        httpServer.listen(PORT, '0.0.0.0', () => {
-            console.log(`Server running on port ${PORT}`);
-            console.log('Socket.IO server is ready');
-        });
-
-    } catch (error) {
-        console.error('Server startup failed:', error.message);
-        process.exit(1);
-    }
+    httpServer.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log('Allowed CORS origins:', allowedOrigins);
+      console.log('Socket.IO server is ready');
+    });
+  } catch (error) {
+    console.error('Server startup failed:', error.message);
+    process.exit(1);
+  }
 };
 
 startServer();
