@@ -22,11 +22,13 @@ import {
   UserCheck,
   CheckCircle,
   RotateCcw,
+  LogOut,
 } from "lucide-react";
 
 import api from "../../services/api";
 import { connectAgentSocket } from "../../services/socket";
 import NotificationSetup from "../../components/NotificationSetup.jsx";
+import { disablePushNotifications } from "../../services/pushNotifications";
 
 const getInitials = (name = "Visitor") =>
   name
@@ -115,6 +117,57 @@ function AgentDashboardPage() {
   const [assigning, setAssigning] = useState(false);
   const [socketConnected, setSocketConnected] = useState(false);
   const [error, setError] = useState("");
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  // Logout
+  const handleLogout = async () => {
+    if (isLoggingOut) return;
+
+    const confirmed = window.confirm(
+      "Are you sure you want to logout?"
+    );
+
+    if (!confirmed) return;
+
+    setIsLoggingOut(true);
+    setError("");
+
+    try {
+      // Attempt to unsubscribe from push notifications.
+      // A push unsubscribe failure should not block logout.
+      try {
+        await disablePushNotifications();
+        console.log("Push notifications disabled.");
+      } catch (pushError) {
+        console.error(
+          "Push notification unsubscribe failed:",
+          pushError
+        );
+      }
+
+      // Clear authentication cookie on backend.
+      await api.post("/auth/logout");
+
+      // Disconnect Socket.IO.
+      socketRef.current?.disconnect();
+      socketRef.current = null;
+
+      setSocketConnected(false);
+
+      // Redirect to login.
+      navigate("/agent/login", { replace: true });
+    } catch (err) {
+      console.error("Logout failed:", err);
+
+      setError(
+        err.response?.data?.message ||
+          err.message ||
+          "Unable to logout. Please try again."
+      );
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   const activeConversation = conversations.find(
     (item) => item.visitorId === activeVisitor?.id
@@ -569,6 +622,12 @@ function AgentDashboardPage() {
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#eeeaff] font-bold text-[#6650d9]">
             A
           </div>
+
+          <SidebarIcon
+            icon={<LogOut size={21} />}
+            onClick={handleLogout}
+            label={isLoggingOut ? "Logging out..." : "Logout"}
+          />
         </div>
       </aside>
 
@@ -968,18 +1027,19 @@ function AgentDashboardPage() {
   );
 }
 
-function SidebarIcon({ icon, active = false, onClick, label }) {
+function SidebarIcon({ icon, active = false, onClick, label, disabled = false }) {
   return (
     <button
       type="button"
       title={label}
       aria-label={label}
       onClick={onClick}
+      disabled={disabled}
       className={`flex h-11 w-11 items-center justify-center rounded-xl transition ${
         active
           ? "bg-[#eeeaff] text-[#6650d9]"
           : "text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-      }`}
+      } disabled:cursor-not-allowed disabled:opacity-50`}
     >
       {icon}
     </button>
