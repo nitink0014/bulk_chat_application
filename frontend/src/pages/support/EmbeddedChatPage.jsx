@@ -43,7 +43,13 @@ const EmbeddedChatPage = () => {
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
 
-  // Receive customer website URL from parent website
+  // Prevent duplicate tracking requests
+  const trackingRef = useRef("");
+
+  // =========================================
+  // RECEIVE CUSTOMER WEBSITE URL
+  // =========================================
+
   useEffect(() => {
     const handleParentMessage = (event) => {
       if (event.source !== window.parent) return;
@@ -73,7 +79,6 @@ const EmbeddedChatPage = () => {
 
     window.addEventListener("message", handleParentMessage);
 
-    // Inform parent website that iframe is ready
     window.parent.postMessage(
       { type: "BULKCHAT_READY" },
       "*"
@@ -84,14 +89,63 @@ const EmbeddedChatPage = () => {
     };
   }, []);
 
-  // Scroll to latest message
+  // =========================================
+  // AUTOMATIC VISITOR TRACKING
+  // =========================================
+
+  useEffect(() => {
+    if (!publicKey || !currentPage) return;
+
+    const visitorId = getVisitorId(publicKey);
+
+    const trackingKey = `${publicKey}_${visitorId}_${currentPage}`;
+
+    // Avoid duplicate requests for the same page
+    if (trackingRef.current === trackingKey) return;
+
+    trackingRef.current = trackingKey;
+
+    const trackCurrentVisitor = async () => {
+      try {
+        const response = await trackVisitor(
+          publicKey,
+          visitorId,
+          currentPage
+        );
+
+        console.log("Website visitor tracked:", response);
+
+      } catch (err) {
+        // Allow another attempt if tracking failed
+        if (trackingRef.current === trackingKey) {
+          trackingRef.current = "";
+        }
+
+        console.error(
+          "Automatic visitor tracking failed:",
+          err.response?.data || err.message
+        );
+      }
+    };
+
+    trackCurrentVisitor();
+
+  }, [publicKey, currentPage]);
+
+  // =========================================
+  // SCROLL TO LATEST MESSAGE
+  // =========================================
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({
       behavior: "smooth",
     });
   }, [messages]);
 
-  // Disconnect socket when component unmounts
+  // =========================================
+  // DISCONNECT SOCKET ON UNMOUNT
+  // =========================================
+
   useEffect(() => {
     return () => {
       if (socketRef.current) {
@@ -101,7 +155,10 @@ const EmbeddedChatPage = () => {
     };
   }, []);
 
-  // Update customer form
+  // =========================================
+  // CUSTOMER FORM
+  // =========================================
+
   const handleCustomerChange = (e) => {
     setCustomer({
       ...customer,
@@ -109,7 +166,10 @@ const EmbeddedChatPage = () => {
     });
   };
 
-  // Add received message
+  // =========================================
+  // ADD RECEIVED MESSAGE
+  // =========================================
+
   const addMessage = (data) => {
     setMessages((previous) => {
       const messageId = data?._id || data?.id;
@@ -127,7 +187,10 @@ const EmbeddedChatPage = () => {
     });
   };
 
-  // Connect visitor socket
+  // =========================================
+  // CONNECT VISITOR SOCKET
+  // =========================================
+
   const setupSocket = (key, visitorId, activeConversation) => {
     if (socketRef.current) {
       socketRef.current.disconnect();
@@ -139,9 +202,13 @@ const EmbeddedChatPage = () => {
       currentPage
     );
 
+    console.log("VISITOR SOCKET URL:", socket.io.uri);
+
     socketRef.current = socket;
 
     socket.on("connect", () => {
+      console.log("VISITOR CONNECTED:", socket.id);
+
       setConnected(true);
 
       socket.emit(
@@ -174,7 +241,10 @@ const EmbeddedChatPage = () => {
     });
   };
 
-  // Start visitor conversation
+  // =========================================
+  // START VISITOR CONVERSATION
+  // =========================================
+
   const handleStartChat = async (e) => {
     e.preventDefault();
 
@@ -202,14 +272,8 @@ const EmbeddedChatPage = () => {
 
       const visitorId = getVisitorId(publicKey);
 
-      // Track visitor using actual customer website URL
-      await trackVisitor(
-        publicKey,
-        visitorId,
-        currentPage
-      );
-
-      // Create or get conversation
+      // Visitor is already tracked automatically.
+      // Create or get conversation.
       const response = await api.post("/chat/conversation", {
         publicKey,
         visitorId,
@@ -235,6 +299,7 @@ const EmbeddedChatPage = () => {
       );
 
       setChatStarted(true);
+
     } catch (err) {
       console.error("Start chat error:", err);
 
@@ -243,12 +308,16 @@ const EmbeddedChatPage = () => {
           err.message ||
           "Something went wrong. Please try again."
       );
+
     } finally {
       setStartingChat(false);
     }
   };
 
-  // Send visitor message
+  // =========================================
+  // SEND VISITOR MESSAGE
+  // =========================================
+
   const handleSendMessage = (e) => {
     e.preventDefault();
 
@@ -282,6 +351,10 @@ const EmbeddedChatPage = () => {
     );
   };
 
+  // =========================================
+  // FORMAT TIME
+  // =========================================
+
   const formatTime = (date) => {
     if (!date) return "";
 
@@ -290,6 +363,10 @@ const EmbeddedChatPage = () => {
       minute: "2-digit",
     });
   };
+
+  // =========================================
+  // UI
+  // =========================================
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-white font-sans">

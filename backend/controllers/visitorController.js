@@ -1,10 +1,20 @@
 
 import Widget from '../models/Widget.js';
 import Visitor from '../models/Visitor.js';
+import PushSubscription from '../models/PushSubscription.js';
 import getDeviceInfo from '../utils/deviceInfo.js';
 import mongoose from 'mongoose';
 
-// @desc    Track a website visitor
+import {
+    sendPushNotification,
+} from '../services/pushNotificationService.js';
+
+
+// ============================================
+// TRACK WEBSITE VISITOR
+// ============================================
+
+// @desc    Track a website visitor and notify agent
 // @route   POST /api/visitors/track
 // @access  Public (Widget Public Key)
 
@@ -49,12 +59,11 @@ export const trackVisitor = async (req, res) => {
             });
         }
 
-        // 3. Get allowed domains
+        // 3. Validate allowed domains
         const allowedDomains = widget.allowedDomains.map(
-            (domain) => domain.toLowerCase()
+            domain => domain.toLowerCase()
         );
 
-        // 4. Validate request origin
         const origin = req.get('origin');
 
         if (origin) {
@@ -77,7 +86,7 @@ export const trackVisitor = async (req, res) => {
             }
         }
 
-        // 5. Validate customer website URL
+        // 4. Validate customer website URL
         let pageUrl = null;
 
         if (currentPage) {
@@ -85,7 +94,10 @@ export const trackVisitor = async (req, res) => {
                 const parsedPage = new URL(currentPage);
 
                 if (!['http:', 'https:'].includes(parsedPage.protocol)) {
-                    throw new Error('Invalid protocol');
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid current page URL',
+                    });
                 }
 
                 const pageHostname = parsedPage.hostname.toLowerCase();
@@ -99,11 +111,7 @@ export const trackVisitor = async (req, res) => {
 
                 pageUrl = parsedPage.href;
 
-            } catch (error) {
-                if (error.message === 'This customer website domain is not allowed') {
-                    throw error;
-                }
-
+            } catch {
                 return res.status(400).json({
                     success: false,
                     message: 'Invalid current page URL',
@@ -111,7 +119,7 @@ export const trackVisitor = async (req, res) => {
             }
         }
 
-        // 6. Validate referrer
+        // 5. Validate referrer
         let validReferrer = null;
 
         if (referrer) {
@@ -126,18 +134,24 @@ export const trackVisitor = async (req, res) => {
             }
         }
 
-        // 7. Get browser, OS, device and IP information
+        // 6. Get device information
         const deviceInfo = getDeviceInfo(req);
         const now = new Date();
 
-        // 8. Create or update visitor
-        const visitor = await Visitor.findOneAndUpdate(
-            {
-                widget: widget._id,
-                visitorId: visitorId.trim(),
-            },
-            {
-                $set: {
+        const visitorQuery = {
+            widget: widget._id,
+            visitorId: visitorId.trim(),
+        };
+
+        // 7. Check whether visitor already exists
+        let visitor = await Visitor.findOne(visitorQuery);
+        let isNewVisitor = false;
+
+        // 8. Create new visitor
+        if (!visitor) {
+            try {
+                visitor = await Visitor.create({
+                    ...visitorQuery,
                     ipAddress: deviceInfo.ipAddress,
                     userAgent: deviceInfo.userAgent,
                     browser: deviceInfo.browser,
@@ -146,24 +160,95 @@ export const trackVisitor = async (req, res) => {
                     currentPage: pageUrl,
                     referrer: validReferrer,
                     isOnline: true,
-                    lastSeen: now,
-                },
-                $setOnInsert: {
                     firstSeen: now,
-                },
-            },
-            {
-                new: true,
-                upsert: true,
-                runValidators: true,
-                setDefaultsOnInsert: true,
-            }
-        );
+                    lastSeen: now,
+                });
 
+                isNewVisitor = true;
+
+            } catch (error) {
+                // Handle simultaneous requests
+                if (error.code !== 11000) {
+                    throw error;
+                }
+
+                visitor = await Visitor.findOne(visitorQuery);
+            }
+        }
+
+        // 9. Update existing visitor
+        if (!isNewVisitor) {
+            visitor = await Visitor.findOneAndUpdate(
+                visitorQuery,
+                {
+                    $set: {
+                        ipAddress: deviceInfo.ipAddress,
+                        userAgent: deviceInfo.userAgent,
+                        browser: deviceInfo.browser,
+                        operatingSystem: deviceInfo.operatingSystem,
+                        device: deviceInfo.device,
+                        currentPage: pageUrl,
+                        referrer: validReferrer,
+                        isOnline: true,
+                        lastSeen: now,
+                    },
+                },
+                {
+                    new: true,
+                    runValidators: true,
+                }
+            );
+        }
+
+        // 10. Send notification to widget owner
+        if (isNewVisitor && visitor) {
+            try {
+                const subscriptions = await PushSubscription.find({
+                    agent: widget.owner,
+                }).lean();
+
+                if (subscriptions.length > 0) {
+                    const payload = {
+                        title: 'New Website Visitor',
+                        body: 'Someone is browsing your website.',
+                        url: '/agent/dashboard',
+                        tag: `bulkchat-visitor-${visitor._id}`,
+                        data: {
+                            visitorId: visitor._id.toString(),
+                        },
+                    };
+
+                    const results = await Promise.allSettled(
+                        subscriptions.map(subscription =>
+                            sendPushNotification(subscription, payload)
+                        )
+                    );
+
+                    console.log(
+                        'Website visit notification attempts:',
+                        results.length
+                    );
+                } else {
+                    console.log(
+                        'No push subscriptions found for widget owner:',
+                        widget.owner.toString()
+                    );
+                }
+
+            } catch (notificationError) {
+                console.error(
+                    'Website Visit Notification Error:',
+                    notificationError
+                );
+            }
+        }
+
+        // 11. Response
         return res.status(200).json({
             success: true,
             message: 'Visitor tracked successfully',
             visitorId: visitor.visitorId,
+            isNewVisitor,
         });
 
     } catch (error) {
@@ -177,6 +262,10 @@ export const trackVisitor = async (req, res) => {
 };
 
 
+// ============================================
+// GET ALL VISITORS
+// ============================================
+
 // @desc    Get all visitors belonging to logged-in agent
 // @route   GET /api/visitors
 // @access  Private (Agent)
@@ -188,7 +277,7 @@ export const getVisitors = async (req, res) => {
             owner: req.user._id,
         }).select('_id');
 
-        const widgetIds = widgets.map((widget) => widget._id);
+        const widgetIds = widgets.map(widget => widget._id);
 
         // 2. Mark visitors offline after 60 seconds
         const inactiveTime = new Date(Date.now() - 60 * 1000);
@@ -230,6 +319,10 @@ export const getVisitors = async (req, res) => {
 };
 
 
+// ============================================
+// GET VISITOR BY ID
+// ============================================
+
 // @desc    Get visitor by ID
 // @route   GET /api/visitors/:id
 // @access  Private (Agent)
@@ -251,7 +344,7 @@ export const getVisitorById = async (req, res) => {
             owner: req.user._id,
         }).select('_id');
 
-        const widgetIds = widgets.map((widget) => widget._id);
+        const widgetIds = widgets.map(widget => widget._id);
 
         // 3. Find visitor belonging to agent's widgets
         const visitor = await Visitor.findOne({
